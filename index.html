@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>UniUni 增强版数据转换器 (适配多格式)</title>
+    <title>UniUni 增强版数据转换器 (自动修正日期格式)</title>
     <style>
         :root { --primary: #2563eb; --err: #dc2626; --bg: #f1f5f9; }
         body { font-family: system-ui; background: var(--bg); padding: 20px; color: #334155; }
@@ -27,13 +27,13 @@
 <body>
 
 <div class="container">
-    <h2>UniUni 运输数据自动转换器</h2>
+    <h2>UniUni 运输数据自动转换器 (修复版)</h2>
     
     <label>1. 请粘贴原始数据文本：</label>
     <textarea id="rawInput" placeholder="直接粘贴包含 BOL# 和 时间的文本..."></textarea>
     
     <div class="btns">
-        <button class="btn-run" onclick="analyze()">解析并检查逻辑</button>
+        <button class="btn-run" onclick="analyze()">解析并修复格式</button>
         <button class="btn-clear" onclick="clearAll()">清空重来</button>
     </div>
 
@@ -42,9 +42,9 @@
             <thead>
                 <tr>
                     <th>BOL#</th>
-                    <th>发车时间</th>
-                    <th>到达时间</th>
-                    <th>卸货时间</th>
+                    <th>发车时间 (修正后)</th>
+                    <th>到达时间 (修正后)</th>
+                    <th>卸货时间 (修正后)</th>
                     <th>逻辑检查</th>
                 </tr>
             </thead>
@@ -54,7 +54,7 @@
 
     <div class="code-output">
         <button class="copy-btn" onclick="copyCode()">复制脚本</button>
-        <pre id="codeBox">// 解析后生成的代码将显示在这里...</pre>
+        <pre id="codeBox">// 解析后生成的脚本将支持浏览器标准格式...</pre>
     </div>
 </div>
 
@@ -65,28 +65,41 @@
         const codeBox = document.getElementById('codeBox');
         tableBody.innerHTML = '';
         
-        // 核心正则表达式：适配年份(2/4位)、路线名、星期名、拼写错误、多余空格
-        // 匹配模式：BOL#数字 ... 发车 ... 到达 ... 卸货
+        // 正则表达式：增加容错
         const entryRegex = /BOL#(\d+)[^]*?-发车时间\s*(\d{2,4})年(\d{1,2})月(\d{1,2})日[^\d]*?(\d{1,2}:\d{2}(?::\d{2})?)[^]*?-到达时间\s*(\d{2,4})年(\d{1,2})月(\d{1,2})日[^\d]*?(\d{1,2}:\d{2}(?::\d{2})?)[^]*?-卸完货时间\s*(\d{2,4})年(\d{1,2})月(\d{1,2})日[^\d]*?(\d{1,2}:\d{2}(?::\d{2})?)/g;
 
         let match;
         let dataMap = {};
         let count = 0;
 
+        // --- 核心修复函数 ---
+        const getFixedDateTime = (y, m, d, t) => {
+            const fullYear = y.length === 2 ? "20" + y : y;
+            const [hour, min] = t.split(':');
+            
+            // 使用 Date 自动处理逻辑顺延 (如 4月31日 -> 5月1日)
+            const dateObj = new Date(parseInt(fullYear), parseInt(m) - 1, parseInt(d), parseInt(hour), parseInt(min));
+            
+            // 格式化为 yyyy-MM-ddThh:mm
+            const fY = dateObj.getFullYear();
+            const fM = String(dateObj.getMonth() + 1).padStart(2, '0');
+            const fD = String(dateObj.getDate()).padStart(2, '0');
+            const fH = String(dateObj.getHours()).padStart(2, '0');
+            const fMin = String(dateObj.getMinutes()).padStart(2, '0');
+            
+            return `${fY}-${fM}-${fD}T${fH}:${fMin}`;
+        };
+
         while ((match = entryRegex.exec(input)) !== null) {
             const bol = match[1];
             
-            // 归一化年份处理 (如果输入26则转为2026)
-            const fixYear = (y) => y.length === 2 ? "20" + y : y;
-            const fmt = (y, m, d, t) => `${fixYear(y)}-${m.padStart(2,'0')}-${d.padStart(2,'0')} ${t.substring(0,5)}`;
+            const t1 = getFixedDateTime(match[2], match[3], match[4], match[5]); // 发车
+            const t2 = getFixedDateTime(match[6], match[7], match[8], match[9]); // 到达
+            const t3 = getFixedDateTime(match[10], match[11], match[12], match[13]); // 卸货
 
-            const t1_s = fmt(match[2], match[3], match[4], match[5]); // 发车
-            const t2_s = fmt(match[6], match[7], match[8], match[9]); // 到达
-            const t3_s = fmt(match[10], match[11], match[12], match[13]); // 卸货
-
-            const d1 = new Date(t1_s);
-            const d2 = new Date(t2_s);
-            const d3 = new Date(t3_s);
+            const d1 = new Date(t1);
+            const d2 = new Date(t2);
+            const d3 = new Date(t3);
 
             let logMsg = "✅ 正常";
             let rowClass = "";
@@ -96,28 +109,28 @@
             tableBody.innerHTML += `
                 <tr class="${rowClass}">
                     <td><b>${bol}</b></td>
-                    <td>${t1_s}</td>
-                    <td>${t2_s}</td>
-                    <td>${t3_s}</td>
+                    <td>${t1.replace('T',' ')}</td>
+                    <td>${t2.replace('T',' ')}</td>
+                    <td>${t3.replace('T',' ')}</td>
                     <td>${rowClass ? '<span class="badge badge-err">'+logMsg+'</span>' : logMsg}</td>
                 </tr>
             `;
 
-            dataMap[bol] = { arrival: t2_s, unload: t3_s };
+            dataMap[bol] = { arrival: t2, unload: t3 };
             count++;
         }
 
         if (count > 0) {
             generateScript(dataMap);
         } else {
-            tableBody.innerHTML = '<tr><td colspan="5" style="text-align:center;">未能识别到数据，请确保包含 "BOL#数字" 以及 "发车/到达/卸货时间" 关键字</td></tr>';
+            tableBody.innerHTML = '<tr><td colspan="5" style="text-align:center;">未能识别到数据...</td></tr>';
         }
     }
 
     function generateScript(dataMap) {
+        // 在生成脚本时，确保 myData 里的值是标准 T 格式
         const script = `/**
- * UniUni 自动填表脚本 (Console版)
- * 生成时间: ${new Date().toLocaleString()}
+ * UniUni 自动填表脚本 (标准格式修正版)
  */
 const myData = ${JSON.stringify(dataMap, null, 4)};
 
@@ -131,30 +144,35 @@ function forceInput(el, val) {
 
 let success = 0;
 document.querySelectorAll('tr').forEach(row => {
-    const bol = row.querySelector('td:nth-child(1)')?.innerText.trim();
+    const bolCell = row.querySelector('td:nth-child(1)');
+    if (!bolCell) return;
+    const bol = bolCell.innerText.trim();
+    
     if (myData[bol]) {
-        // 到达时间在第8列，卸货在第9列 (根据UniUni后台实际情况微调数字)
-        const arrivalInp = row.querySelector('td:nth-child(8) input');
-        const unloadInp = row.querySelector('td:nth-child(9) input');
+        // 自动适配 UniUni 输入框
+        const arrivalInp = row.querySelector('td:nth-child(8) input[type="datetime-local"]');
+        const unloadInp = row.querySelector('td:nth-child(9) input[type="datetime-local"]');
         
         if (arrivalInp) forceInput(arrivalInp, myData[bol].arrival);
         if (unloadInp) forceInput(unloadInp, myData[bol].unload);
         
-        console.log("已填充 BOL#" + bol);
+        console.log("已成功填充 BOL#" + bol + " (格式: " + myData[bol].arrival + ")");
         success++;
     }
 });
-console.log("--- 脚本执行完毕，共填充 " + success + " 行 ---");`;
+console.log("--- 填充任务结束，共计 " + success + " 行 ---");`;
         document.getElementById('codeBox').innerText = script;
     }
 
     function copyCode() {
         const text = document.getElementById('codeBox').innerText;
-        navigator.clipboard.writeText(text).then(() => alert("代码已复制到剪贴板！"));
+        navigator.clipboard.writeText(text).then(() => alert("代码已复制！请前往 UniUni 后台控制台粘贴运行。"));
     }
 
     function clearAll() {
-        location.reload();
+        document.getElementById('rawInput').value = '';
+        document.getElementById('tableBody').innerHTML = '';
+        document.getElementById('codeBox').innerText = '// 已清空';
     }
 </script>
 </body>
